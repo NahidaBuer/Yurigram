@@ -10,7 +10,7 @@ using "ui/widgets/widgets.style";
 using "chat_helpers/chat_helpers.style";
 using "boxes/boxes.style"; // UserpicButton
 
-windowMinWidth: 380px;
+windowMinWidth: 360px;
 windowMinHeight: 480px;
 windowDefaultWidth: 800px;
 windowDefaultHeight: 600px;
@@ -33,7 +33,7 @@ windowShellUnavailablePadding: margins(24px, 24px, 24px, 24px);
 
 columnMinimalWidthLeft: 260px;
 columnMaximalWidthLeft: 540px;
-columnMinimalWidthMain: 380px;
+columnMinimalWidthMain: 360px;
 columnMinimalWidthThird: 292px;
 columnMaximalWidthThird: 1176px;
 
