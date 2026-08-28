@@ -53,3 +53,37 @@ if (APPLE)
             "$<TARGET_FILE_DIR:test_text>/Contents/Resources/"
     )
 endif()
+
+add_executable(test_message_search_filter EXCLUDE_FROM_ALL)
+init_target(test_message_search_filter "(tests)")
+
+target_include_directories(test_message_search_filter PRIVATE ${src_loc})
+target_precompile_headers(test_message_search_filter PRIVATE
+    ${src_loc}/mtproto/mtproto_pch.h
+)
+
+nice_target_sources(test_message_search_filter ${src_loc}
+PRIVATE
+    api/api_messages_search_filter.cpp
+    api/api_messages_search.h
+    api/api_messages_search_intersection_state.cpp
+    api/api_messages_search_intersection_state.h
+    api/api_messages_search_state.cpp
+    api/api_messages_search_state.h
+    mtproto/details/mtproto_dump_to_text.cpp
+    tests/test_message_search_filter.cpp
+)
+
+target_link_libraries(test_message_search_filter
+PRIVATE
+    tdesktop::td_scheme
+    desktop-app::lib_base
+    desktop-app::lib_ui
+    desktop-app::lib_tl
+    desktop-app::external_qt
+    desktop-app::external_zlib
+)
+
+set_target_properties(test_message_search_filter PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)

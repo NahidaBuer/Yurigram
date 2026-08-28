@@ -1,4 +1,4 @@
-﻿/*
+/*
 This file is part of Telegram Desktop,
 the official desktop application for the Telegram messaging service.
 
@@ -1147,6 +1147,7 @@ void TopBarWidget::updateControlsGeometry() {
 		_searchCancel.destroy();
 		_jumpToDate.destroy();
 		_chooseFromUser.destroy();
+		_messageFilter.destroy();
 	}
 	auto searchFieldTop = _searchField
 		? countSelectedButtonsTop(_searchShown.value(_searchMode ? 1. : 0.))
@@ -1280,7 +1281,7 @@ void TopBarWidget::updateControlsGeometry() {
 				cancelLeft - st::dialogsCalendarTopBar.width,
 				fieldY);
 		}
-		updateChooseFromUserGeometry();
+		updateSearchActionsGeometry();
 		updateSearchJumpToDateVisibility();
 	}
 
@@ -1663,7 +1664,7 @@ void TopBarWidget::searchEnableJumpToDate(bool enable) {
 			object_ptr<Ui::IconButton>(this, st::dialogsCalendarTopBar));
 		_jumpToDate->toggle(false, anim::type::instant);
 		_jumpToDate->setUpdatedCallback([=](float64) {
-			updateChooseFromUserGeometry();
+			updateSearchActionsGeometry();
 		});
 		_jumpToDate->entity()->clicks(
 		) | rpl::to_empty | rpl::start_to_stream(
@@ -1686,13 +1687,14 @@ bool TopBarWidget::searchJumpToDateFits() const {
 	const auto required = placeholderWidth
 		+ st::dialogsFilterPadding.x()
 		+ st::dialogsSearchFromTopBar.width
+		+ st::dialogsSearchTypeTopBar.width
 		+ st::dialogsCalendarTopBar.width
 		+ st::dialogsCancelSearch.width;
 	return (_searchField->width() >= required);
 }
 
-void TopBarWidget::updateChooseFromUserGeometry() {
-	if (!_searchField || !_searchCancel || !_chooseFromUser) {
+void TopBarWidget::updateSearchActionsGeometry() {
+	if (!_searchField || !_searchCancel) {
 		return;
 	}
 	const auto fieldRight = st::dialogsFilterSkip
@@ -1704,9 +1706,21 @@ void TopBarWidget::updateChooseFromUserGeometry() {
 			st::dialogsCalendarTopBar.width,
 			_jumpToDate->shownProgress())
 		: 0;
-	_chooseFromUser->moveToLeft(
-		cancelLeft - reserved - st::dialogsSearchFromTopBar.width,
-		_searchField->y());
+	auto right = cancelLeft - reserved;
+	if (_chooseFromUser) {
+		_chooseFromUser->moveToLeft(
+			right - st::dialogsSearchFromTopBar.width,
+			_searchField->y());
+		right -= anim::interpolate(
+			0,
+			st::dialogsSearchFromTopBar.width,
+			_chooseFromUser->shownProgress());
+	}
+	if (_messageFilter) {
+		_messageFilter->moveToLeft(
+			right - st::dialogsSearchTypeTopBar.width,
+			_searchField->y());
+	}
 }
 
 void TopBarWidget::updateSearchJumpToDateVisibility() {
@@ -1739,6 +1753,48 @@ void TopBarWidget::searchEnableChooseFromUser(bool enable, bool visible) {
 	auto additional = QMargins();
 	if (_chooseFromUser && _chooseFromUser->toggled()) {
 		additional.setRight(_chooseFromUser->width());
+	}
+	if (_messageFilter && _messageFilter->toggled()) {
+		additional.setRight(
+			additional.right() + _messageFilter->width());
+	}
+	_searchField->setAdditionalMargins(additional);
+	updateControlsVisibility();
+	updateControlsGeometry();
+}
+
+void TopBarWidget::searchEnableMessageFilter(
+		bool enable,
+		bool visible,
+		bool active) {
+	if (!_searchMode) {
+		return;
+	} else if (!enable) {
+		_messageFilter.destroy();
+	} else if (!_messageFilter) {
+		_messageFilter.create(
+			this,
+			object_ptr<Ui::IconButton>(this, st::dialogsSearchTypeTopBar));
+		_messageFilter->entity()->setAccessibleName(
+			tr::lng_message_search_filter_type(tr::now));
+		_messageFilter->toggle(visible, anim::type::instant);
+		_messageFilter->entity()->clicks(
+		) | rpl::to_empty | rpl::start_to_stream(
+			_messageFilterRequests,
+			_messageFilter->lifetime());
+	} else {
+		_messageFilter->toggle(visible, anim::type::normal);
+	}
+	_messageFilter->entity()->setIconOverride(
+		active ? &st::dialogsSearchTypeActive : nullptr,
+		active ? &st::dialogsSearchTypeActive : nullptr);
+	auto additional = QMargins();
+	if (_chooseFromUser && _chooseFromUser->toggled()) {
+		additional.setRight(_chooseFromUser->width());
+	}
+	if (_messageFilter && _messageFilter->toggled()) {
+		additional.setRight(
+			additional.right() + _messageFilter->width());
 	}
 	_searchField->setAdditionalMargins(additional);
 	updateControlsVisibility();

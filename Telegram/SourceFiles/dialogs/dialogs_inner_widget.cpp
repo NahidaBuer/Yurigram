@@ -192,7 +192,8 @@ base::options::toggle CtrlClickChatNewWindow({
 		: state.fromPeer;
 	const auto waiting = trimmed.isEmpty()
 		&& state.tags.empty()
-		&& !fromPeer;
+		&& !fromPeer
+		&& state.messageFilter == Api::SearchFilter::NoFilter;
 	const auto suggestAllChats = !waiting
 		&& state.tab == ChatSearchTab::MyMessages
 		&& (state.filter != ChatTypeFilter::All || !state.fromArchive);
@@ -244,7 +245,7 @@ base::options::toggle CtrlClickChatNewWindow({
 [[nodiscard]] QString ChatTypeFilterLabel(ChatTypeFilter filter) {
 	switch (filter) {
 	case ChatTypeFilter::All:
-		return tr::lng_search_filter_all(tr::now);
+		return tr::lng_message_search_filter_all(tr::now);
 	case ChatTypeFilter::Private:
 		return tr::lng_search_filter_private(tr::now);
 	case ChatTypeFilter::Groups:
@@ -1616,16 +1617,20 @@ void InnerWidget::paintEvent(QPaintEvent *e) {
 		}
 
 		if (!_searchResults.empty()) {
+			const auto searchedCount = _searchedMigratedCount
+				+ _searchedCount;
 			const auto text = showUnreadInSearchResults
 				? u"Search results"_q
 				: (_searchState.tab == ChatSearchTab::PublicPosts && !_searchIn)
 				? (_searchState.query.isEmpty()
 					? tr::lng_posts_subtitle_empty(tr::now)
 					: tr::lng_posts_subtitle(tr::now))
+				: (searchedCount < 0)
+				? tr::lng_group_call_invite_search_results(tr::now)
 				: tr::lng_search_found_results(
 					tr::now,
 					lt_count,
-					_searchedMigratedCount + _searchedCount);
+					searchedCount);
 			const auto searchLowerText = (_searchHashOrCashtag == HashOrCashtag::None)
 				? _searchState.query.toLower()
 				: QString();
@@ -5219,7 +5224,11 @@ void InnerWidget::updateSearchIn() {
 		{ ChatSearchTab::Archive, archiveIcon },
 		{ ChatSearchTab::MyMessages, myIcon },
 		{ ChatSearchTab::PublicPosts, publicIcon },
-	}, _searchState.tab, peerTabType, fromImage, fromName);
+	},
+		_searchState.tab,
+		peerTabType,
+		fromImage,
+		fromName);
 }
 
 void InnerWidget::repaintSearchResult(int index) {

@@ -92,9 +92,9 @@ public:
 			}
 		}, _list->lifetime());
 
-		_messagesSearch.messagesFounds(
-		) | rpl::on_next([this](const Api::FoundMessages &found) {
-			searchReceived(found);
+		_messagesSearch.outcomes(
+		) | rpl::on_next([this](const Api::SearchOutcome &outcome) {
+			outcomeReceived(outcome);
 		}, _list->lifetime());
 	}
 
@@ -129,8 +129,9 @@ public:
 		if (_searchStarted
 			&& !_searchFirstPage
 			&& !_searchFull
+			&& !_searchGeneration
 			&& (bottom + kSearchPreloadHeight >= _list->height())) {
-			_messagesSearch.searchMore();
+			startSearchMore();
 		}
 	}
 
@@ -139,11 +140,14 @@ private:
 		if (_searchQuery == query) {
 			return;
 		}
-		_searchQuery = query;
 		_searchTimer.cancel();
 		_searchStarted = false;
+		_searchGeneration = 0;
 		_searchFirstPage = false;
 		_searchFull = false;
+		_searchTotal = 0;
+		_messagesSearch.cancel();
+		_searchQuery = query;
 		auto state = Dialogs::SearchState();
 		state.tab = Dialogs::ChatSearchTab::MyMessages;
 		state.query = query;
@@ -156,18 +160,63 @@ private:
 		}
 		_searchStarted = true;
 		_searchFirstPage = true;
+		_searchFull = false;
+		_searchTotal = 0;
 		_list->searchRequested(true);
-		_messagesSearch.searchMessages({ .query = _searchQuery });
+		const auto generation = Api::AllocateSearchGeneration();
+		_searchGeneration = generation;
+		const auto started = _messagesSearch.searchMessages(
+			{ .query = _searchQuery },
+			generation);
+		if (started != generation && _searchGeneration == generation) {
+			_searchGeneration = 0;
+			_searchFirstPage = false;
+			_searchFull = true;
+			searchReceived(Api::FoundMessages{ 0 }, true);
+		}
 	}
 
-	void searchReceived(const Api::FoundMessages &found) {
-		const auto type = Dialogs::SearchRequestType{
-			.start = base::take(_searchFirstPage),
-			.peer = true,
-		};
-		if (found.messages.empty()) {
+	void startSearchMore() {
+		const auto generation = Api::AllocateSearchGeneration();
+		_searchGeneration = generation;
+		const auto started = _messagesSearch.searchMore(generation);
+		if (started != generation && _searchGeneration == generation) {
+			_searchGeneration = 0;
+			_searchFull = true;
+			searchReceived(Api::FoundMessages{ _searchTotal }, false);
+		}
+	}
+
+	void outcomeReceived(const Api::SearchOutcome &outcome) {
+		const auto expectedPage = _searchFirstPage
+			? Api::SearchPage::First
+			: Api::SearchPage::More;
+		if (outcome.generation != _searchGeneration
+			|| outcome.page != expectedPage) {
+			return;
+		}
+		_searchGeneration = 0;
+		const auto start = base::take(_searchFirstPage);
+		const auto successful
+			= (outcome.type == Api::SearchOutcomeType::Success)
+			|| (outcome.type == Api::SearchOutcomeType::Empty);
+		const auto found = successful
+			? outcome.found
+			: Api::FoundMessages{ start ? 0 : _searchTotal };
+		if (successful) {
+			_searchTotal = found.total;
+		}
+		if (!successful || outcome.type == Api::SearchOutcomeType::Empty) {
 			_searchFull = true;
 		}
+		searchReceived(found, start);
+	}
+
+	void searchReceived(const Api::FoundMessages &found, bool start) {
+		const auto type = Dialogs::SearchRequestType{
+			.start = start,
+			.peer = true,
+		};
 		const auto owner = &_controller->session().data();
 		auto items = std::vector<not_null<HistoryItem*>>();
 		items.reserve(found.messages.size());
@@ -185,6 +234,8 @@ private:
 	Api::MessagesSearch _messagesSearch;
 	QString _searchQuery;
 	base::Timer _searchTimer;
+	Api::SearchGeneration _searchGeneration = 0;
+	int _searchTotal = 0;
 	bool _searchStarted = false;
 	bool _searchFirstPage = false;
 	bool _searchFull = false;

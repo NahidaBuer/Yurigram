@@ -323,13 +323,14 @@ public:
 	[[nodiscard]] rpl::producer<not_null<QKeyEvent*>> keyEvents() const;
 
 	void setFrom(PeerData *peer);
+	void submitSearch();
 	bool handleKeyPress(not_null<QKeyEvent*> e);
 
 protected:
 	void keyPressEvent(QKeyEvent *e) override;
 
 private:
-	void clearItems();
+	void refreshItems();
 	void refreshTags();
 	void updateSize();
 	void requestSearch(bool cache = true);
@@ -452,13 +453,22 @@ void TopBar::setQuery(const QString &query) {
 	}
 }
 
-void TopBar::clearItems() {
+void TopBar::refreshItems() {
 	_select->setItemRemovedCallback(nullptr);
 
 	for (const auto &id : _select->getItems()) {
 		_select->removeItem(id);
 	}
 
+	const auto from = _from.current();
+	if (from && !_history->peer->isSelf()) {
+		_select->addItem(
+			from->id.value,
+			tr::lng_dlg_search_from(tr::now, lt_user, from->shortName()),
+			st::activeButtonBg,
+			PaintUserpicCallback(from, false),
+			Ui::MultiSelect::AddItemWay::Default);
+	}
 	_select->setItemRemovedCallback([=](uint64) {
 		_from = nullptr;
 		requestSearchDelayed();
@@ -582,9 +592,9 @@ void TopBar::refreshTags() {
 
 void TopBar::requestSearch(bool cache) {
 	const auto search = SearchRequest{
-		_select->getQuery(),
-		_from.current(),
-		_searchTagsSelected
+		.query = _select->getQuery(),
+		.from = _from.current(),
+		.tags = _searchTagsSelected,
 	};
 	if (cache) {
 		_typedRequests.insert(search);
@@ -593,11 +603,10 @@ void TopBar::requestSearch(bool cache) {
 }
 
 void TopBar::requestSearchDelayed() {
-	// Check cached queries.
 	const auto search = SearchRequest{
-		_select->getQuery(),
-		_from.current(),
-		_searchTagsSelected
+		.query = _select->getQuery(),
+		.from = _from.current(),
+		.tags = _searchTagsSelected,
 	};
 	if (_typedRequests.contains(search)) {
 		requestSearch(false);
@@ -628,22 +637,13 @@ rpl::producer<PeerData*> TopBar::fromValue() const {
 }
 
 void TopBar::setFrom(PeerData *peer) {
-	clearItems();
+	_from = peer;
+	refreshItems();
+	requestSearchDelayed();
+}
 
-	const auto guard = gsl::finally([&] {
-		_from = peer;
-		requestSearchDelayed();
-	});
-	if (!peer || _history->peer->isSelf()) {
-		return;
-	}
-
-	_select->addItem(
-		peer->id.value,
-		tr::lng_dlg_search_from(tr::now, lt_user, peer->shortName()),
-		st::activeButtonBg,
-		PaintUserpicCallback(peer, false),
-		Ui::MultiSelect::AddItemWay::Default);
+void TopBar::submitSearch() {
+	requestSearch(false);
 }
 
 class BottomBar final : public Ui::RpWidget {
@@ -652,6 +652,7 @@ public:
 	BottomBar(not_null<Ui::RpWidget*> parent, bool fastShowChooseFrom);
 
 	void setTotal(int total);
+	void updateTotal(int total);
 	void setCurrent(int current);
 
 	[[nodiscard]] rpl::producer<Index> showItemRequests() const;
@@ -812,6 +813,11 @@ void BottomBar::setTotal(int total) {
 	setCurrent(1);
 }
 
+void BottomBar::updateTotal(int total) {
+	_total = total;
+	updateText(_current.current());
+}
+
 void BottomBar::setCurrent(int current) {
 	_current.force_assign(current);
 }
@@ -890,6 +896,12 @@ public:
 private:
 	void showAnimated();
 	void hideList();
+	void startSearch(SearchRequest search);
+	void searchMore();
+	void firstOutcome(const Api::SearchOutcome &outcome);
+	void nextOutcome(const Api::SearchOutcome &outcome);
+	[[nodiscard]] const Api::FoundMessages &searchMessages() const;
+	[[nodiscard]] const SearchRequest &searchRequest() const;
 
 	const not_null<Window::SessionController*> _window;
 	const not_null<History*> _history;
@@ -898,6 +910,9 @@ private:
 	const List _list;
 
 	Api::MessagesSearchMerged _apiSearch;
+	Api::SearchGeneration _firstGeneration = 0;
+	Api::SearchGeneration _pageGeneration = 0;
+	bool _paginationStopped = true;
 
 	struct {
 		struct {
@@ -908,7 +923,7 @@ private:
 	} _pendingJump;
 
 	MsgId _topMsgId;
-	Api::SearchFilter _searchFilter = Api::SearchFilter::NoFilter;
+	std::optional<Api::SearchFilter> _fixedSearchFilter;
 	rpl::variable<bool> _filterAllowsFrom = true;
 	Dialogs::Key _calendarChat;
 	Fn<void(FullMsgId, Fn<void()>)> _calendarJump;
@@ -957,18 +972,18 @@ ComposeSearch::Inner::Inner(
 
 	_topBar->searchRequests(
 	) | rpl::on_next([=](SearchRequest search) {
-		if (search.query.isEmpty() && search.tags.empty()) {
+		if (_fixedSearchFilter) {
+			search.filter = *_fixedSearchFilter;
+		}
+		if (search.query.isEmpty()
+			&& search.tags.empty()
+			&& search.filter == Api::SearchFilter::NoFilter) {
 			if (!search.from || _history->peer->isSelf()) {
 				return;
 			}
 		}
 		search.topMsgId = _topMsgId;
-		search.filter = _searchFilter;
-		_apiSearch.clear();
-
-		_list.controller->addItems({}, true);
-		_list.controller->setQuery(search.query);
-		_apiSearch.search(search);
+		startSearch(std::move(search));
 	}, _topBar->lifetime());
 
 	_topBar->queryChanges(
@@ -990,44 +1005,42 @@ ComposeSearch::Inner::Inner(
 		}
 	}, _topBar->lifetime());
 
-	_apiSearch.newFounds(
-	) | rpl::on_next([=] {
-		const auto &apiData = _apiSearch.messages();
-		const auto weak = base::make_weak(_bottomBar.get());
-		_bottomBar->setTotal(apiData.total);
-		if (weak) {
-			// Activating the first search result may switch the chat.
-			_list.controller->addItems(apiData.messages, true);
-		}
+	_apiSearch.firstOutcomes(
+	) | rpl::on_next([=](const Api::SearchOutcome &outcome) {
+		firstOutcome(outcome);
 	}, _topBar->lifetime());
 
-	_apiSearch.nextFounds(
-	) | rpl::on_next([=] {
-		if (_pendingJump.data.token == _apiSearch.messages().nextToken) {
-			_pendingJump.jumps.fire_copy(_pendingJump.data.index);
-		}
-		_list.controller->addItems(_apiSearch.messages().messages, false);
+	_apiSearch.nextOutcomes(
+	) | rpl::on_next([=](const Api::SearchOutcome &outcome) {
+		nextOutcome(outcome);
 	}, _topBar->lifetime());
 
 	rpl::merge(
 		_pendingJump.jumps.events() | rpl::filter(rpl::mappers::_1 >= 0),
 		_bottomBar->showItemRequests()
 	) | rpl::on_next([=](BottomBar::Index index) {
-		const auto &apiData = _apiSearch.messages();
+		const auto apiData = searchMessages();
 		const auto &messages = apiData.messages;
 		const auto size = int(messages.size());
-		if (index >= (size - 1) && size != apiData.total) {
-			_apiSearch.searchMore();
-		}
 		if (index >= size || index < 0) {
-			_pendingJump.data = { apiData.nextToken, index };
+			if (index >= 0 && !_paginationStopped) {
+				_pendingJump.data = { apiData.nextToken, index };
+				searchMore();
+			} else {
+				_pendingJump.data = {};
+			}
 			return;
 		}
 		_pendingJump.data = {};
-		const auto item = _history->owner().message(messages[index]);
+		const auto fullId = messages[index];
+		const auto query = searchRequest().query;
+		if (index >= (size - 1) && !_paginationStopped) {
+			searchMore();
+		}
+		const auto item = _history->owner().message(fullId);
 		if (item) {
 			const auto weak = base::make_weak(_topBar.get());
-			_activations.fire_copy({ item, _apiSearch.request().query });
+			_activations.fire_copy({ item, query });
 			if (weak) {
 				hideList();
 			}
@@ -1036,7 +1049,7 @@ ComposeSearch::Inner::Inner(
 
 	_list.controller->showItemRequests(
 	) | rpl::on_next([=](const FullMsgId &id) {
-		const auto &messages = _apiSearch.messages().messages;
+		const auto &messages = searchMessages().messages;
 		const auto it = ranges::find(messages, id);
 		if (it != end(messages)) {
 			_bottomBar->setCurrent(std::distance(begin(messages), it) + 1);
@@ -1045,9 +1058,9 @@ ComposeSearch::Inner::Inner(
 
 	_list.controller->searchMoreRequests(
 	) | rpl::on_next([=] {
-		const auto &apiData = _apiSearch.messages();
-		if (int(apiData.messages.size()) != apiData.total) {
-			_apiSearch.searchMore();
+		if (!_paginationStopped
+			&& !_pageGeneration) {
+			searchMore();
 		}
 	}, _list.container->lifetime());
 
@@ -1096,8 +1109,116 @@ ComposeSearch::Inner::Inner(
 	}));
 
 	if (!query.isEmpty()) {
-		_apiSearch.search({ query });
+		startSearch({ query });
 	}
+}
+
+void ComposeSearch::Inner::startSearch(SearchRequest search) {
+	const auto generation = Api::AllocateSearchGeneration();
+	_firstGeneration = generation;
+	_pageGeneration = 0;
+	_paginationStopped = false;
+	_pendingJump.data = {};
+	_apiSearch.clear();
+
+	_list.controller->addItems({}, true);
+	_list.controller->setQuery(search.query);
+	const auto started = _apiSearch.search(search, generation);
+	if (started != generation && _firstGeneration == generation) {
+		_firstGeneration = 0;
+		_paginationStopped = true;
+		_bottomBar->setTotal(0);
+		_list.controller->addItems({}, true);
+	}
+}
+
+void ComposeSearch::Inner::searchMore() {
+	if (_paginationStopped || _pageGeneration) {
+		return;
+	}
+	const auto generation = Api::AllocateSearchGeneration();
+	_pageGeneration = generation;
+	const auto started = _apiSearch.searchMore(generation);
+	if (started != generation && _pageGeneration == generation) {
+		_pageGeneration = 0;
+		_pendingJump.data = {};
+		_paginationStopped = true;
+	}
+}
+
+void ComposeSearch::Inner::firstOutcome(const Api::SearchOutcome &outcome) {
+	if (outcome.generation != _firstGeneration
+		|| outcome.page != Api::SearchPage::First) {
+		return;
+	}
+	_firstGeneration = 0;
+	const auto successful = (outcome.type == Api::SearchOutcomeType::Success)
+		|| (outcome.type == Api::SearchOutcomeType::Empty);
+	auto found = outcome.found;
+	if (!successful && found.messages.empty()) {
+		found.total = 0;
+	}
+	const auto &committed = searchMessages();
+	_paginationStopped = !successful
+		|| found.partial
+		|| (!found.hasMore
+			&& committed.total >= 0
+			&& int(committed.messages.size()) >= committed.total);
+	if (outcome.type == Api::SearchOutcomeType::Empty) {
+		_paginationStopped = true;
+	}
+	if (!successful) {
+		_pendingJump.data = {};
+	}
+	const auto weak = base::make_weak(_bottomBar.get());
+	_bottomBar->setTotal(found.total);
+	if (weak) {
+		_list.controller->addItems(found.messages, true);
+	}
+}
+
+void ComposeSearch::Inner::nextOutcome(const Api::SearchOutcome &outcome) {
+	if (outcome.generation != _pageGeneration
+		|| outcome.page != Api::SearchPage::More) {
+		return;
+	}
+	_pageGeneration = 0;
+	const auto successful = (outcome.type == Api::SearchOutcomeType::Success)
+		|| (outcome.type == Api::SearchOutcomeType::Empty);
+	const auto &committed = searchMessages();
+	_paginationStopped = !successful
+		|| outcome.found.partial
+		|| (!outcome.found.hasMore
+			&& committed.total >= 0
+			&& int(committed.messages.size()) >= committed.total);
+	if (outcome.type == Api::SearchOutcomeType::Empty) {
+		_paginationStopped = true;
+	}
+	if (!successful) {
+		_pendingJump.data = {};
+	}
+	if (committed.total >= 0) {
+		_bottomBar->updateTotal(committed.total);
+	}
+	if (!outcome.found.messages.empty()) {
+		_list.controller->addItems(outcome.found.messages, false);
+	}
+	if (_pendingJump.data.token == committed.nextToken) {
+		if (_pendingJump.data.index < int(committed.messages.size())
+			|| !_paginationStopped) {
+			_pendingJump.jumps.fire_copy(_pendingJump.data.index);
+		} else {
+			_pendingJump.data = {};
+		}
+	}
+}
+
+const Api::FoundMessages &ComposeSearch::Inner::searchMessages() const {
+	return _apiSearch.messages();
+}
+
+const SearchRequest &ComposeSearch::Inner::searchRequest() const {
+	return _apiSearch.request();
 }
 
 void ComposeSearch::Inner::setInnerFocus() {
@@ -1118,8 +1239,9 @@ void ComposeSearch::Inner::setTopMsgId(MsgId topMsgId) {
 }
 
 void ComposeSearch::Inner::setSearchFilter(Api::SearchFilter filter) {
-	_searchFilter = filter;
+	_fixedSearchFilter = filter;
 	_filterAllowsFrom = (filter != Api::SearchFilter::Pinned);
+	_topBar->submitSearch();
 }
 
 void ComposeSearch::Inner::setCalendarChat(const Dialogs::Key &chat) {

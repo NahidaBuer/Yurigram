@@ -204,6 +204,7 @@ ModerateOptions CalculateModerateOptions(const ModerateReactionEntry &reaction) 
 		struct State final {
 			base::flat_map<PeerId, int> messagesCounts;
 			int index = 0;
+			Api::SearchGeneration generation = 0;
 			rpl::lifetime apiLifetime;
 		};
 		const auto search = lifetime.make_state<Api::MessagesSearch>(history);
@@ -215,13 +216,34 @@ ModerateOptions CalculateModerateOptions(const ModerateReactionEntry &reaction) 
 			}
 			const auto peer = from[state->index];
 			const auto peerId = peer->id;
-			state->apiLifetime = search->messagesFounds(
-			) | rpl::on_next([=](const Api::FoundMessages &found) {
-				state->messagesCounts[peerId] = found.total;
+			state->apiLifetime.destroy();
+			const auto generation = Api::AllocateSearchGeneration();
+			state->generation = generation;
+			state->apiLifetime = search->outcomes(
+			) | rpl::on_next([=](const Api::SearchOutcome &outcome) {
+				if (outcome.generation != state->generation
+					|| outcome.page != Api::SearchPage::First) {
+					return;
+				}
+				state->apiLifetime.destroy();
+				state->generation = 0;
+				state->messagesCounts[peerId]
+					= (outcome.type == Api::SearchOutcomeType::Success)
+					? outcome.found.total
+					: 0;
 				state->index++;
 				repeat(repeat);
 			});
-			search->searchMessages({ .from = peer });
+			const auto started = search->searchMessages(
+				{ .from = peer },
+				generation);
+			if (started != generation && state->generation == generation) {
+				state->apiLifetime.destroy();
+				state->generation = 0;
+				state->messagesCounts[peerId] = 0;
+				state->index++;
+				repeat(repeat);
+			}
 		};
 		consumer.put_next({});
 		send(send);

@@ -210,6 +210,21 @@ constexpr auto kStickerHeightValuesCount = kStickerHeightMaxIndex + 1;
 
 	builder.add(nullptr, [] {
 		return Builder::SearchEntry{
+			.id = u"enhanced/messages/exact-search-intersection"_q,
+			.title = tr::lng_settings_exact_search_intersection(tr::now),
+			.keywords = {
+				u"search"_q,
+				u"sender"_q,
+				u"message type"_q,
+				u"filter"_q,
+			},
+			.deeplink
+				= u"tg://settings/enhanced/messages/exact-search-intersection"_q,
+		};
+	});
+
+	builder.add(nullptr, [] {
+		return Builder::SearchEntry{
 			.id = u"enhanced/messages/show-group-sender-avatar"_q,
 			.title = tr::lng_settings_show_group_sender_avatar(tr::now),
 			.keywords = { u"group"_q, u"sender"_q, u"avatar"_q },
@@ -632,6 +647,26 @@ constexpr auto kStickerHeightValuesCount = kStickerHeightMaxIndex + 1;
 			SetEnhancedValue("disable_global_search", toggled);
 			EnhancedSettings::Write();
 		}, container->lifetime());
+
+		const auto exactSearchIntersection = AddButtonWithIcon(
+			inner,
+			tr::lng_settings_exact_search_intersection(),
+			st::settingsButtonNoIcon);
+		registerHighlight(
+			u"enhanced/messages/exact-search-intersection"_q,
+			exactSearchIntersection);
+		exactSearchIntersection->toggleOn(
+			EnhancedSettings::ExactSearchIntersectionValue()
+		)->toggledChanges(
+		) | rpl::filter([=](bool toggled) {
+			return (toggled
+				!= EnhancedSettings::ExactSearchIntersection());
+		}) | rpl::on_next([=](bool toggled) {
+			EnhancedSettings::SetExactSearchIntersection(toggled);
+		}, container->lifetime());
+		AddDividerText(
+			inner,
+			tr::lng_settings_exact_search_intersection_desc());
 
 		const auto showGroupSenderAvatar = AddButtonWithIcon(
 				inner,

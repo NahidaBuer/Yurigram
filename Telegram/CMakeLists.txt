@@ -1,4 +1,4 @@
-﻿# This file is part of Telegram Desktop,
+# This file is part of Telegram Desktop,
 # the official desktop application for the Telegram messaging service.
 #
 # For license and copyright information please follow this link:
@@ -151,9 +151,16 @@ PRIVATE
     api/api_media.cpp
     api/api_media.h
     api/api_messages_search.cpp
+    api/api_messages_search_filter.cpp
     api/api_messages_search.h
+    api/api_messages_search_intersection.cpp
+    api/api_messages_search_intersection.h
+    api/api_messages_search_intersection_state.cpp
+    api/api_messages_search_intersection_state.h
     api/api_messages_search_merged.cpp
     api/api_messages_search_merged.h
+    api/api_messages_search_state.cpp
+    api/api_messages_search_state.h
     api/api_peer_colors.cpp
     api/api_peer_colors.h
     api/api_peer_photo.cpp
@@ -847,6 +854,8 @@ PRIVATE
     dialogs/dialogs_row.h
     dialogs/dialogs_search_from_controllers.cpp
     dialogs/dialogs_search_from_controllers.h
+    dialogs/dialogs_search_filter.cpp
+    dialogs/dialogs_search_filter.h
     dialogs/dialogs_search_tags.cpp
     dialogs/dialogs_search_tags.h
     dialogs/dialogs_search_posts.cpp

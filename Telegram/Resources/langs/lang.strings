@@ -8764,6 +8764,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_settings_more_right_action_comments" = "Move comments button to the right";
 "lng_settings_mpris_call_hangup" = "Use media controls to accept or hangup";
 "lng_settings_enhanced" = "Enhanced Settings";
+"lng_settings_exact_search_intersection" = "Combine sender and message type locally";
+"lng_settings_exact_search_intersection_desc" = "Experimental. Probes sender and message type searches separately, continues with the smaller result stream, and checks the other condition locally. Sparse results require manual continuation and stop at a safety limit. When disabled, sender and message type remain mutually exclusive.";
+
+"lng_message_search_filter_type" = "Message type";
+"lng_message_search_filter_all" = "All messages";
+"lng_message_search_filter_mentions" = "Mentions of me";
+"lng_search_intersection_failed" = "Message search failed. Try again.";
+"lng_search_intersection_timed_out" = "Message search timed out. Try again.";
+"lng_search_intersection_partial" = "Search stopped at its safety limit. The results shown are incomplete.";
+"lng_search_intersection_continue" = "Continue search";
+"lng_search_intersection_continuing" = "Searching...";
 "lng_chat_enhanced_settings" = "Chat Enhanced Settings";
 "lng_chat_enhanced_settings_desc" = "The options below will override global enhanced settings and apply only to this chat.";
 "lng_chat_enhanced_default" = "Default";

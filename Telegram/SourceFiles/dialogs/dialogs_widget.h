@@ -1,4 +1,4 @@
-﻿/*
+/*
 This file is part of Telegram Desktop,
 the official desktop application for the Telegram messaging service.
 
@@ -18,6 +18,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_single_message_search.h"
 
 class ChannelData;
+
+namespace Api {
+class MessagesSearchIntersection;
+class MessagesSearchMerged;
+struct SearchOutcome;
+} // namespace Api
 
 namespace MTP {
 class Error;
@@ -179,6 +185,19 @@ private:
 	void completeHashtag(QString tag);
 	void requestPublicPosts(bool fromStart);
 	void requestMessages(bool fromStart);
+	void startSearchMerged(not_null<History*> history);
+	void searchMergedMore();
+	void searchMergedOutcome(
+		const Api::SearchOutcome &outcome,
+		bool first);
+	void startSearchIntersection(not_null<History*> history);
+	void searchIntersectionMore();
+	void searchIntersectionOutcome(
+		const Api::SearchOutcome &outcome,
+		bool first);
+	void showSearchIntersectionNotice(const Api::SearchOutcome &outcome);
+	void showSearchOutcomeNotice(const Api::SearchOutcome &outcome);
+	void updateSearchContinuation(bool visible, bool loading = false);
 	[[nodiscard]] not_null<SearchProcessState*> currentSearchProcess();
 
 	[[nodiscard]] bool computeSearchWithPostsPreview() const;
@@ -232,6 +251,7 @@ private:
 
 	void showCalendar();
 	void showSearchFrom();
+	void showSearchFilter();
 	void showMainMenu();
 	void clearSearchCache(bool clearPosts);
 	void setSearchQuery(const QString &query, int cursorPosition = -1);
@@ -249,6 +269,7 @@ private:
 	void updateStoriesTitleShown();
 	void updateJumpToDateVisibility(bool fast = false);
 	void updateSearchFromVisibility(bool fast = false);
+	void updateSearchFilterVisibility(bool fast = false);
 	void updateControlsGeometry();
 	void refreshTopBars();
 	void showSearchInTopBar(anim::type animated);
@@ -335,6 +356,7 @@ private:
 	object_ptr<Ui::IconButton> _searchForNarrowLayout;
 	object_ptr<Ui::InputField> _search;
 	object_ptr<Ui::FadeWrapScaled<Ui::IconButton>> _chooseFromUser;
+	object_ptr<Ui::FadeWrapScaled<Ui::IconButton>> _chooseSearchFilter;
 	object_ptr<Ui::FadeWrapScaled<Ui::IconButton>> _jumpToDate;
 	object_ptr<Ui::CrossButton> _cancelSearch;
 	object_ptr<Ui::FadeWrapScaled<Ui::IconButton>> _lockUnlock;
@@ -347,6 +369,7 @@ private:
 	std::unique_ptr<HistoryView::ContactStatus> _forumReportBar;
 
 	base::unique_qptr<Ui::RpWidget> _chatFilters;
+	base::unique_qptr<Ui::PopupMenu> _searchFilterMenu;
 
 	base::unique_qptr<Ui::SlideWrap<Ui::RpWidget>> _topBarSuggestion;
 	base::unique_qptr<Ui::RpWidget> _topBarSuggestionPlaceholder;
@@ -372,6 +395,7 @@ private:
 	class BottomButton;
 	object_ptr<BottomButton> _updateTelegram = { nullptr };
 	object_ptr<BottomButton> _loadMoreChats = { nullptr };
+	object_ptr<BottomButton> _searchContinue = { nullptr };
 	std::unique_ptr<Ui::DownloadBar> _downloadBar;
 	std::unique_ptr<Window::ConnectionState> _connecting;
 
@@ -422,6 +446,8 @@ private:
 
 	QString _searchQuery;
 	PeerData *_searchQueryFrom = nullptr;
+	Api::SearchFilter _searchQueryMessageFilter
+		= Api::SearchFilter::NoFilter;
 	std::vector<Data::ReactionId> _searchQueryTags;
 	ChatSearchTab _searchQueryTab = {};
 	ChannelData *_searchQueryCommunity = nullptr;
@@ -436,6 +462,15 @@ private:
 	SearchProcessState _migratedProcess;
 	SearchProcessState _postsProcess;
 	int _historiesRequest = 0; // Not real mtpRequestId.
+	std::unique_ptr<Api::MessagesSearchMerged> _searchMerged;
+	Api::SearchGeneration _searchMergedFirstGeneration = 0;
+	Api::SearchGeneration _searchMergedPageGeneration = 0;
+	rpl::lifetime _searchMergedLifetime;
+	std::unique_ptr<Api::MessagesSearchIntersection> _searchIntersection;
+	Api::SearchGeneration _searchIntersectionFirstGeneration = 0;
+	Api::SearchGeneration _searchIntersectionPageGeneration = 0;
+	bool _searchIntersectionActive = false;
+	rpl::lifetime _searchIntersectionLifetime;
 
 	Api::PeerSearch _peerSearch;
 	Api::SingleMessageSearch _singleMessageSearch;
